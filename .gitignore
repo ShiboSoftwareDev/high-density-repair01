@@ -1,0 +1,9 @@
+node_modules
+dist
+cosmos-export
+bun.lock
+bun.lockb
+.cursor
+.DS_Store
+.env
+.vscode
