@@ -25,12 +25,13 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",
+    "dataset-hd08": "github:tscircuit/dataset-hd08",
+    "graphics-debug": "^0.0.87",
     "react": "^19.2.4",
     "react-cosmos": "^7.2.0",
     "react-cosmos-plugin-vite": "^7.2.0",
     "react-dom": "^19.2.4",
     "typescript": "^5.9.3",
-    "vite": "^8.0.1",
-    "dataset-hd08": "github:tscircuit/dataset-hd08"
+    "vite": "^8.0.1"
   }
 }
