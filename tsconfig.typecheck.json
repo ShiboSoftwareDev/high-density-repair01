@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "exclude": [
+    "assets",
+    "dist",
+    "hd-cache.tscircuit.com",
+    "pages/dataset-hd08.page.tsx",
+    "tmp",
+    "tscircuit-autorouter"
+  ]
+}

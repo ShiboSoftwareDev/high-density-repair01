@@ -18,7 +18,7 @@
     "measure:hd08v2:repair": "bun scripts/measure-hd08v2-repair.ts",
     "render:hd08v2:repair": "bun scripts/render-hd08v2-repair.ts",
     "test": "bun test",
-    "typecheck": "node --max-old-space-size=8192 ./node_modules/typescript/bin/tsc --noEmit",
+    "typecheck": "node ./node_modules/typescript/bin/tsc -p tsconfig.typecheck.json --noEmit",
     "format": "biome format --write .",
     "format:check": "biome format ."
   },
