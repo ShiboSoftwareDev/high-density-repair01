@@ -1,9 +1,10 @@
 import { expect, test } from "bun:test"
 import { sample0004 } from "dataset-hd08"
 import { HighDensityRepair01 } from "lib/HighDensityRepair01"
+import type { HighDensityRepair01Input } from "lib/types"
 
 test("visualizeHighDensityRepair renders node, routes, and obstacles", () => {
-  const solver = new HighDensityRepair01(sample0004)
+  const solver = new HighDensityRepair01(sample0004 as HighDensityRepair01Input)
   const graphics = solver.visualize()
 
   expect(graphics.coordinateSystem).toBe("cartesian")

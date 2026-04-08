@@ -1,2 +1,6 @@
-export { HighDensityRepair01 as MySolver } from "./HighDensityRepair01";
-export type * from "./types";
+export { HighDensityRepair01 as MySolver } from "./HighDensityRepair01"
+export * from "./drc-check"
+export * from "./force-improve"
+export * from "./repair"
+export * from "./simplify"
+export type * from "./types"
