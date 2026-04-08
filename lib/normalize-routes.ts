@@ -14,6 +14,9 @@ const getDistance = (left: Point2D, right: Point2D) =>
 const arePointsCoincident = (left: Point2D, right: Point2D) =>
   getDistance(left, right) <= POSITION_EPSILON
 
+const isSamePoint3D = (left: Point3D, right: Point3D) =>
+  arePointsCoincident(left, right) && left.z === right.z
+
 const copyPoint = (point: Point3D): Point3D => ({
   x: point.x,
   y: point.y,
@@ -98,6 +101,143 @@ const deriveVias = (points: Point3D[]) => {
   }
 
   return vias
+}
+
+const getNodeBounds = (nodeWithPortPoints: NodeWithPortPoints) => ({
+  minX: nodeWithPortPoints.center.x - nodeWithPortPoints.width / 2,
+  maxX: nodeWithPortPoints.center.x + nodeWithPortPoints.width / 2,
+  minY: nodeWithPortPoints.center.y - nodeWithPortPoints.height / 2,
+  maxY: nodeWithPortPoints.center.y + nodeWithPortPoints.height / 2,
+})
+
+const clampColocatedClusterToBounds = (
+  points: Point3D[],
+  index: number,
+  bounds: ReturnType<typeof getNodeBounds>,
+) => {
+  const anchorPoint = points[index]
+  if (!anchorPoint) return
+
+  const anchorPosition = {
+    x: anchorPoint.x,
+    y: anchorPoint.y,
+  }
+  const clampedPosition = {
+    x: Math.max(bounds.minX, Math.min(bounds.maxX, anchorPosition.x)),
+    y: Math.max(bounds.minY, Math.min(bounds.maxY, anchorPosition.y)),
+  }
+
+  for (let pointIndex = index; pointIndex >= 0; pointIndex -= 1) {
+    const point = points[pointIndex]
+    if (!point || !arePointsCoincident(point, anchorPosition)) {
+      break
+    }
+
+    point.x = clampedPosition.x
+    point.y = clampedPosition.y
+  }
+
+  for (let pointIndex = index + 1; pointIndex < points.length; pointIndex += 1) {
+    const point = points[pointIndex]
+    if (!point || !arePointsCoincident(point, anchorPosition)) {
+      break
+    }
+
+    point.x = clampedPosition.x
+    point.y = clampedPosition.y
+  }
+}
+
+const getInteriorJogPoint = (
+  origin: Point2D,
+  bounds: ReturnType<typeof getNodeBounds>,
+  preferredStep: number,
+) => {
+  const step = Math.max(preferredStep, 0.05)
+  const onLeft = Math.abs(origin.x - bounds.minX) <= POSITION_EPSILON
+  const onRight = Math.abs(origin.x - bounds.maxX) <= POSITION_EPSILON
+  const onBottom = Math.abs(origin.y - bounds.minY) <= POSITION_EPSILON
+  const onTop = Math.abs(origin.y - bounds.maxY) <= POSITION_EPSILON
+
+  if (onLeft) {
+    return { x: Math.min(bounds.maxX, origin.x + step), y: origin.y }
+  }
+  if (onRight) {
+    return { x: Math.max(bounds.minX, origin.x - step), y: origin.y }
+  }
+  if (onBottom) {
+    return { x: origin.x, y: Math.min(bounds.maxY, origin.y + step) }
+  }
+  if (onTop) {
+    return { x: origin.x, y: Math.max(bounds.minY, origin.y - step) }
+  }
+
+  const centerX = (bounds.minX + bounds.maxX) / 2
+  const centerY = (bounds.minY + bounds.maxY) / 2
+  const deltaX = centerX - origin.x
+  const deltaY = centerY - origin.y
+
+  if (Math.abs(deltaX) >= Math.abs(deltaY)) {
+    return {
+      x: Math.max(bounds.minX, Math.min(bounds.maxX, origin.x + Math.sign(deltaX || 1) * step)),
+      y: origin.y,
+    }
+  }
+
+  return {
+    x: origin.x,
+    y: Math.max(bounds.minY, Math.min(bounds.maxY, origin.y + Math.sign(deltaY || 1) * step)),
+  }
+}
+
+const createMinimalRouteBetweenPorts = (
+  route: NodeHdRoute,
+  nodeWithPortPoints: NodeWithPortPoints,
+  startPort: PortPoint,
+  endPort: PortPoint,
+) => {
+  const bounds = getNodeBounds(nodeWithPortPoints)
+  const preferredStep = Math.max(route.traceThickness * 2, route.viaDiameter, 0.1)
+
+  if (isSamePoint3D(startPort, endPort)) {
+    return [copyPortPoint(startPort)]
+  }
+
+  if (arePointsCoincident(startPort, endPort)) {
+    const jogPoint = getInteriorJogPoint(startPort, bounds, preferredStep)
+
+    return [
+      copyPortPoint(startPort),
+      { x: jogPoint.x, y: jogPoint.y, z: startPort.z },
+      { x: jogPoint.x, y: jogPoint.y, z: endPort.z },
+      copyPortPoint(endPort),
+    ]
+  }
+
+  if (startPort.z === endPort.z) {
+    return [copyPortPoint(startPort), copyPortPoint(endPort)]
+  }
+
+  let viaPoint = {
+    x: (startPort.x + endPort.x) / 2,
+    y: (startPort.y + endPort.y) / 2,
+  }
+
+  if (arePointsCoincident(viaPoint, startPort) || arePointsCoincident(viaPoint, endPort)) {
+    viaPoint = getInteriorJogPoint(startPort, bounds, preferredStep)
+  }
+
+  viaPoint = {
+    x: Math.max(bounds.minX, Math.min(bounds.maxX, viaPoint.x)),
+    y: Math.max(bounds.minY, Math.min(bounds.maxY, viaPoint.y)),
+  }
+
+  return [
+    copyPortPoint(startPort),
+    { x: viaPoint.x, y: viaPoint.y, z: startPort.z },
+    { x: viaPoint.x, y: viaPoint.y, z: endPort.z },
+    copyPortPoint(endPort),
+  ]
 }
 
 const getRoutePortsByConnection = (nodeWithPortPoints: NodeWithPortPoints) => {
@@ -210,23 +350,47 @@ const ensureEndAttachmentLayer = (points: Point3D[], endPort: PortPoint) => {
 
 const normalizeRouteEndpointLayers = (
   route: NodeHdRoute,
+  nodeWithPortPoints: NodeWithPortPoints,
   startPort: PortPoint,
   endPort: PortPoint,
 ) => {
   const normalizedRoute = cloneRoute(route)
 
   if (normalizedRoute.route.length < 2) {
-    if (!arePointsCoincident(startPort, endPort)) {
-      normalizedRoute.route = [copyPortPoint(startPort), copyPortPoint(endPort)]
-    } else {
-      normalizedRoute.route = [copyPortPoint(startPort)]
-    }
+    normalizedRoute.route = createMinimalRouteBetweenPorts(
+      route,
+      nodeWithPortPoints,
+      startPort,
+      endPort,
+    )
     normalizedRoute.vias = deriveVias(normalizedRoute.route)
     return normalizedRoute
   }
 
   ensureStartAttachmentLayer(normalizedRoute.route, startPort)
   ensureEndAttachmentLayer(normalizedRoute.route, endPort)
+  const bounds = getNodeBounds(nodeWithPortPoints)
+  const firstMovedPointIndex = getFirstMovedPointIndex(normalizedRoute.route)
+  if (firstMovedPointIndex !== null) {
+    clampColocatedClusterToBounds(
+      normalizedRoute.route,
+      firstMovedPointIndex,
+      bounds,
+    )
+  }
+
+  const lastMovedPointIndex = getLastMovedPointIndex(normalizedRoute.route)
+  if (
+    lastMovedPointIndex !== null &&
+    lastMovedPointIndex !== firstMovedPointIndex
+  ) {
+    clampColocatedClusterToBounds(
+      normalizedRoute.route,
+      lastMovedPointIndex,
+      bounds,
+    )
+  }
+
   normalizedRoute.vias = deriveVias(normalizedRoute.route)
 
   return normalizedRoute
@@ -246,6 +410,7 @@ export const normalizeRoutesToPortAttachments = (
 
     return normalizeRouteEndpointLayers(
       route,
+      nodeWithPortPoints,
       endpointPorts.startPort,
       endpointPorts.endPort,
     )
