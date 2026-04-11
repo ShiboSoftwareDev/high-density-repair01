@@ -1,4 +1,4 @@
-import type { HighDensityIntraNodeRoute } from "./types"
+import type { HighDensityIntraNodeRoute } from "../types/types"
 
 type RoutePoint = HighDensityIntraNodeRoute["route"][number]
 type ViaPoint = HighDensityIntraNodeRoute["vias"][number]

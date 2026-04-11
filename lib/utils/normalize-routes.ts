@@ -4,7 +4,7 @@ import type {
   Point2D,
   Point3D,
   PortPoint,
-} from "./types"
+} from "../types/types"
 
 const POSITION_EPSILON = 1e-6
 

@@ -1,6 +1,9 @@
 import type { GraphicsObject } from "graphics-debug"
-import type { HighDensityRoute, NodeWithPortPoints } from "./high-density-types"
-import { safeTransparentize } from "./colors"
+import type {
+  HighDensityRoute,
+  NodeWithPortPoints,
+} from "./types/high-density-types"
+import { safeTransparentize } from "./utils/colors"
 import { BaseSolver } from "./BaseSolver"
 
 type Vector = {
@@ -1357,7 +1360,7 @@ export const runForceDirectedImprovement = (
   }
 }
 
-export class Pipeline4HighDensityForceImproveSolver extends BaseSolver {
+export class HighDensityForceImproveSolver extends BaseSolver {
   readonly sampleEntries: ForceImproveSampleEntry[]
   readonly originalHdRoutes: HighDensityRoute[]
   readonly originalNodeWithPortPoints: NodeWithPortPoints[]
@@ -1415,7 +1418,7 @@ export class Pipeline4HighDensityForceImproveSolver extends BaseSolver {
   }
 
   override getSolverName(): string {
-    return "Pipeline4HighDensityForceImproveSolver"
+    return "HighDensityForceImproveSolver"
   }
 
   override getConstructorParams() {

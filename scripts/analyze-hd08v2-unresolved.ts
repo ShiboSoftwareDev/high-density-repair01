@@ -8,7 +8,7 @@ import type {
   Point2D,
   Point3D,
   PortPoint,
-} from "../lib/types"
+} from "../lib/types/types"
 
 const POSITION_EPSILON = 1e-6
 
