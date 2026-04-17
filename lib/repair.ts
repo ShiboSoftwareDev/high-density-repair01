@@ -134,6 +134,7 @@ export const repairSample = (
             simplifiedRoutes,
             forceImprovementPasses,
             {
+              clearance: options.clearance,
               includeForceVectors: options.includeForceVectors,
             },
           ),

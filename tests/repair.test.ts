@@ -1,8 +1,11 @@
 import { expect, test } from "bun:test"
 import { runDrcCheck } from "../lib/drc-check"
 import { repairSample } from "../lib/repair"
-import type { HighDensityRepair01Input } from "../lib/types/types"
-import { HighDensityForceImproveSolver } from "lib/HighDensityForceImproveSolver"
+import type { HighDensityRepair01Input, NodeHdRoute } from "../lib/types/types"
+import {
+  HighDensityForceImproveSolver,
+  runForceDirectedImprovement,
+} from "lib/HighDensityForceImproveSolver"
 
 const createOutOfBoundsSample = (): HighDensityRepair01Input => ({
   adjacentObstacles: [],
@@ -192,6 +195,39 @@ const createBorderOvershootSample = (): HighDensityRepair01Input => ({
   },
 })
 
+const createViaRoute = (
+  connectionName: string,
+  y: number,
+  viaDiameter: number,
+): NodeHdRoute => ({
+  capacityMeshNodeId: "repair-sample",
+  connectionName,
+  rootConnectionName: connectionName,
+  route: [
+    { x: -1, y, z: 0 },
+    { x: 0, y, z: 0 },
+    { x: 0, y, z: 1 },
+    { x: 1, y, z: 1 },
+  ],
+  traceThickness: 0.1,
+  viaDiameter,
+  vias: [{ x: 0, y }],
+})
+
+const getViaDistance = (
+  leftRoute: Pick<NodeHdRoute, "vias">,
+  rightRoute: Pick<NodeHdRoute, "vias">,
+) => {
+  const leftVia = leftRoute.vias[0]
+  const rightVia = rightRoute.vias[0]
+
+  if (!leftVia || !rightVia) {
+    throw new Error("Expected both test routes to have a via.")
+  }
+
+  return Math.hypot(leftVia.x - rightVia.x, leftVia.y - rightVia.y)
+}
+
 test("repairSample can turn a simple out-of-bounds route into a DRC-clean route", () => {
   const sample = createOutOfBoundsSample()
   const originalDrc = runDrcCheck(
@@ -282,4 +318,39 @@ test("repairSample clamps endpoint-adjacent border overshoot back inside bounds"
   expect(result.selectedStage).toBe("normalized")
   expect(result.finalDrc.ok).toBe(true)
   expect(result.sample.nodeHdRoutes[0]?.route[1]?.y).toBeLessThanOrEqual(2)
+})
+
+test("runForceDirectedImprovement uses each route's real via diameter", () => {
+  const viaDiameter = 0.8
+  const result = runForceDirectedImprovement(
+    { minX: -4, maxX: 4, minY: -4, maxY: 4 },
+    [
+      createViaRoute("conn04", 0, viaDiameter),
+      createViaRoute("conn05", 0.2, viaDiameter),
+    ],
+    200,
+    { clearance: 0, includeForceVectors: false },
+  )
+
+  expect(
+    getViaDistance(result.routes[0]!, result.routes[1]!),
+  ).toBeGreaterThanOrEqual(viaDiameter - 0.01)
+})
+
+test("runForceDirectedImprovement applies the passed clearance override", () => {
+  const viaDiameter = 0.8
+  const clearance = 0.4
+  const result = runForceDirectedImprovement(
+    { minX: -4, maxX: 4, minY: -4, maxY: 4 },
+    [
+      createViaRoute("conn06", 0, viaDiameter),
+      createViaRoute("conn07", 0.2, viaDiameter),
+    ],
+    200,
+    { clearance, includeForceVectors: false },
+  )
+
+  expect(
+    getViaDistance(result.routes[0]!, result.routes[1]!),
+  ).toBeGreaterThanOrEqual(viaDiameter + clearance - 0.01)
 })

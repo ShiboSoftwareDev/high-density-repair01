@@ -42,6 +42,7 @@ type ForceElementBase = {
   rootConnectionName: string
   node: MutableNode
   fixed: boolean
+  radius: number
 }
 
 type PointForceElement = ForceElementBase & {
@@ -61,6 +62,7 @@ type SegmentObstacle = {
   z: number
   startNode: MutableNode
   endNode: MutableNode
+  traceThickness: number
 }
 
 type SegmentSpatialLayerIndex = {
@@ -70,6 +72,7 @@ type SegmentSpatialLayerIndex = {
 
 type SegmentSpatialIndex = {
   byLayer: Map<number, SegmentSpatialLayerIndex>
+  maxTraceHalfThickness: number
 }
 
 type ForceImproveSampleEntry = {
@@ -94,21 +97,12 @@ export type ForceImproveResult = {
 }
 
 export type ForceImproveOptions = {
+  clearance?: number
   includeForceVectors?: boolean
 }
 
-const TARGET_CLEARANCE = 0.2
-const CLEARANCE_FALLOFF_DISTANCE = 0.4
-const VIA_DIAMETER = 0.3
-const VIA_RADIUS = VIA_DIAMETER / 2
-const POINT_SEGMENT_TARGET_CLEARANCE = 0.25
-const POINT_SEGMENT_FALLOFF_DISTANCE = 0.5
-const VIA_SEGMENT_TARGET_CLEARANCE = VIA_RADIUS + 0.25
-const VIA_SEGMENT_FALLOFF_DISTANCE = 0.5
-const VIA_BORDER_EXTRA_CLEARANCE = 0.15
-const VIA_BORDER_TARGET_CLEARANCE =
-  VIA_SEGMENT_TARGET_CLEARANCE + VIA_BORDER_EXTRA_CLEARANCE + 0.1
-const VIA_BORDER_FALLOFF_DISTANCE = VIA_BORDER_TARGET_CLEARANCE + 0.05
+const DEFAULT_CLEARANCE = 0.1
+const CLEARANCE_FALLOFF_MARGIN = 0.25
 const VIA_VIA_REPULSION_STRENGTH = 0.034
 const VIA_SEGMENT_REPULSION_STRENGTH = 0.18
 const POINT_SEGMENT_REPULSION_STRENGTH = 0.06
@@ -304,9 +298,9 @@ const getClearanceForceMagnitude = (
   strength: number,
   tailRatio: number,
   falloff: number,
-  intersectionBoost = INTERSECTION_FORCE_BOOST,
-  targetClearance = TARGET_CLEARANCE,
-  falloffDistance = CLEARANCE_FALLOFF_DISTANCE,
+  intersectionBoost: number,
+  targetClearance: number,
+  falloffDistance: number,
 ) => {
   const clampedDistance = Math.max(distance, 0)
   if (clampedDistance >= falloffDistance) {
@@ -349,23 +343,44 @@ const clampMutableRoutesToBounds = (
   }
 }
 
-const getElementTargetClearance = (element: ForceElement) =>
-  element.kind === "via"
-    ? VIA_SEGMENT_TARGET_CLEARANCE
-    : POINT_SEGMENT_TARGET_CLEARANCE
+const resolveClearance = (options?: ForceImproveOptions) => {
+  const clearance = options?.clearance ?? DEFAULT_CLEARANCE
+  if (!Number.isFinite(clearance) || clearance < 0) {
+    throw new Error(
+      "Force improvement clearance must be a non-negative number.",
+    )
+  }
+  return clearance
+}
 
-const getElementFalloffDistance = (element: ForceElement) =>
-  element.kind === "via"
-    ? VIA_SEGMENT_FALLOFF_DISTANCE
-    : POINT_SEGMENT_FALLOFF_DISTANCE
+const getElementSegmentTargetClearance = (
+  element: ForceElement,
+  segment: SegmentObstacle,
+  clearance: number,
+) => element.radius + segment.traceThickness / 2 + clearance
 
-const getBorderTargetClearance = (element: ForceElement) =>
-  element.kind === "via" ? VIA_BORDER_TARGET_CLEARANCE : TARGET_CLEARANCE
+const getElementElementTargetClearance = (
+  leftElement: ForceElement,
+  rightElement: ForceElement,
+  clearance: number,
+) => leftElement.radius + rightElement.radius + clearance
 
-const getBorderFalloffDistance = (element: ForceElement) =>
-  element.kind === "via"
-    ? VIA_BORDER_FALLOFF_DISTANCE
-    : CLEARANCE_FALLOFF_DISTANCE
+const getSegmentSearchExpansion = (
+  segmentSpatialIndex: SegmentSpatialIndex,
+  element: ForceElement,
+  clearance: number,
+  falloffMargin = 0,
+) =>
+  element.radius +
+  segmentSpatialIndex.maxTraceHalfThickness +
+  clearance +
+  falloffMargin
+
+const getBorderTargetClearance = (element: ForceElement, clearance: number) =>
+  element.radius + clearance
+
+const getBorderFalloffDistance = (element: ForceElement, clearance: number) =>
+  getBorderTargetClearance(element, clearance) + CLEARANCE_FALLOFF_MARGIN
 
 const getBorderTailRatio = (element: ForceElement) =>
   element.kind === "via"
@@ -486,6 +501,7 @@ const buildForceElements = (routes: MutableRoute[]): ForceElement[] => {
           rootConnectionName: mutableRoute.rootConnectionName,
           node,
           fixed: node.fixed,
+          radius: mutableRoute.route.viaDiameter / 2,
         })
         continue
       }
@@ -497,6 +513,7 @@ const buildForceElements = (routes: MutableRoute[]): ForceElement[] => {
         node,
         z: routePoint.z,
         fixed: node.fixed,
+        radius: mutableRoute.route.traceThickness / 2,
       })
     }
   }
@@ -531,6 +548,7 @@ const buildSegmentObstacles = (routes: MutableRoute[]): SegmentObstacle[] => {
         z: routePoint.z,
         startNode,
         endNode,
+        traceThickness: mutableRoute.route.traceThickness,
       })
     }
   }
@@ -614,6 +632,7 @@ const getBorderForce = (
   element: ForceElement,
   elementX: number,
   elementY: number,
+  clearance: number,
   stepDecay: number,
 ): Vector => {
   if (element.fixed) {
@@ -621,8 +640,8 @@ const getBorderForce = (
   }
 
   const { minX, maxX, minY, maxY } = bounds
-  const targetClearance = getBorderTargetClearance(element)
-  const falloffDistance = getBorderFalloffDistance(element)
+  const targetClearance = getBorderTargetClearance(element, clearance)
+  const falloffDistance = getBorderFalloffDistance(element, clearance)
   const tailRatio = getBorderTailRatio(element)
   const borderRepulsionFalloff = getBorderRepulsionFalloff(element)
   const intersectionBoost = getElementIntersectionBoost(element)
@@ -700,11 +719,16 @@ const buildSegmentSpatialIndex = (
 ): SegmentSpatialIndex => {
   const byLayer = new Map<number, SegmentSpatialLayerIndex>()
   const segmentsByLayer = new Map<number, SegmentObstacle[]>()
+  let maxTraceHalfThickness = 0
 
   for (const segment of segments) {
     const layerSegments = segmentsByLayer.get(segment.z) ?? []
     layerSegments.push(segment)
     segmentsByLayer.set(segment.z, layerSegments)
+    maxTraceHalfThickness = Math.max(
+      maxTraceHalfThickness,
+      segment.traceThickness / 2,
+    )
   }
 
   for (const [layer, layerSegments] of segmentsByLayer) {
@@ -714,7 +738,7 @@ const buildSegmentSpatialIndex = (
     }
   }
 
-  return { byLayer }
+  return { byLayer, maxTraceHalfThickness }
 }
 
 const getSegmentSpatialSearches = (
@@ -809,6 +833,7 @@ const resolveClearanceConstraints = (
   forceElements: ForceElement[],
   segments: SegmentObstacle[],
   nodeCorrections: Float64Array,
+  clearance: number,
   passCount = CLEARANCE_PROJECTION_PASSES,
   maxCorrection = MAX_CLEARANCE_CORRECTION,
 ) => {
@@ -834,17 +859,22 @@ const resolveClearanceConstraints = (
           continue
         }
         const rightNode = rightElement.node
+        const targetClearance = getElementElementTargetClearance(
+          leftElement,
+          rightElement,
+          clearance,
+        )
 
         const separationX = leftNode.x - rightNode.x
         const separationY = leftNode.y - rightNode.y
         if (
-          Math.abs(separationX) >= TARGET_CLEARANCE ||
-          Math.abs(separationY) >= TARGET_CLEARANCE
+          Math.abs(separationX) >= targetClearance ||
+          Math.abs(separationY) >= targetClearance
         ) {
           continue
         }
         const distance = Math.hypot(separationX, separationY)
-        const penetration = TARGET_CLEARANCE - distance
+        const penetration = targetClearance - distance
         if (penetration <= 0) continue
 
         const fallbackSeed =
@@ -892,13 +922,17 @@ const resolveClearanceConstraints = (
       const element = forceElements[elementIndex]
       if (!element) continue
       const elementNode = element.node
-      const targetClearance = getElementTargetClearance(element)
+      const searchExpansion = getSegmentSearchExpansion(
+        segmentSpatialIndex,
+        element,
+        clearance,
+      )
       const segmentSearches = getSegmentSpatialSearches(
         segmentSpatialIndex,
         element,
         elementNode.x,
         elementNode.y,
-        targetClearance,
+        searchExpansion,
       )
 
       for (const segmentSearch of segmentSearches) {
@@ -927,6 +961,11 @@ const resolveClearanceConstraints = (
           const separationX = elementNode.x - closestPointX
           const separationY = elementNode.y - closestPointY
           const distance = Math.hypot(separationX, separationY)
+          const targetClearance = getElementSegmentTargetClearance(
+            element,
+            segment,
+            clearance,
+          )
           const penetration = targetClearance - distance
           if (penetration <= 0) continue
 
@@ -1029,6 +1068,7 @@ export const runForceDirectedImprovement = (
   const nodeForces = new Float64Array(totalNodeCount * 2)
   const nodeCorrections = new Float64Array(totalNodeCount * 2)
   const includeForceVectors = options?.includeForceVectors ?? true
+  const clearance = resolveClearance(options)
   clampMutableRoutesToBounds(mutableRoutes, bounds)
   let forceVectors: ForceVector[] = []
 
@@ -1062,12 +1102,18 @@ export const runForceDirectedImprovement = (
           continue
         }
         const rightNode = rightElement.node
+        const targetClearance = getElementElementTargetClearance(
+          leftElement,
+          rightElement,
+          clearance,
+        )
+        const falloffDistance = targetClearance + CLEARANCE_FALLOFF_MARGIN
 
         const separationX = leftNode.x - rightNode.x
         const separationY = leftNode.y - rightNode.y
         if (
-          Math.abs(separationX) >= CLEARANCE_FALLOFF_DISTANCE ||
-          Math.abs(separationY) >= CLEARANCE_FALLOFF_DISTANCE
+          Math.abs(separationX) >= falloffDistance ||
+          Math.abs(separationY) >= falloffDistance
         ) {
           continue
         }
@@ -1092,6 +1138,9 @@ export const runForceDirectedImprovement = (
             VIA_VIA_REPULSION_STRENGTH,
             REPULSION_TAIL_RATIO,
             REPULSION_FALLOFF,
+            INTERSECTION_FORCE_BOOST,
+            targetClearance,
+            falloffDistance,
           ) * stepDecay
 
         if (magnitude <= 0) continue
@@ -1126,13 +1175,18 @@ export const runForceDirectedImprovement = (
       const element = forceElements[elementIndex]
       if (!element) continue
       const elementNode = element.node
-      const falloffDistance = getElementFalloffDistance(element)
+      const searchExpansion = getSegmentSearchExpansion(
+        segmentSpatialIndex,
+        element,
+        clearance,
+        CLEARANCE_FALLOFF_MARGIN,
+      )
       const segmentSearches = getSegmentSpatialSearches(
         segmentSpatialIndex,
         element,
         elementNode.x,
         elementNode.y,
-        falloffDistance,
+        searchExpansion,
       )
 
       for (const segmentSearch of segmentSearches) {
@@ -1161,6 +1215,12 @@ export const runForceDirectedImprovement = (
           const separationX = elementNode.x - closestPointX
           const separationY = elementNode.y - closestPointY
           const distance = Math.hypot(separationX, separationY)
+          const targetClearance = getElementSegmentTargetClearance(
+            element,
+            segment,
+            clearance,
+          )
+          const falloffDistance = targetClearance + CLEARANCE_FALLOFF_MARGIN
           const fallbackSeed = elementIndex * 97 + segment.obstacleIndex * 13
           let directionX = 0
           let directionY = 0
@@ -1192,7 +1252,7 @@ export const runForceDirectedImprovement = (
               REPULSION_TAIL_RATIO,
               REPULSION_FALLOFF,
               getElementIntersectionBoost(element),
-              getElementTargetClearance(element),
+              targetClearance,
               falloffDistance,
             ) * stepDecay
 
@@ -1238,6 +1298,7 @@ export const runForceDirectedImprovement = (
         element,
         elementNode.x,
         elementNode.y,
+        clearance,
         stepDecay,
       )
       applyForceToElement(
@@ -1398,6 +1459,7 @@ export const runForceDirectedImprovement = (
       forceElements,
       segments,
       nodeCorrections,
+      clearance,
       CLEARANCE_PROJECTION_PASSES,
       MAX_CLEARANCE_CORRECTION,
     )
@@ -1409,6 +1471,7 @@ export const runForceDirectedImprovement = (
     forceElements,
     segments,
     nodeCorrections,
+    clearance,
     FINAL_CLEARANCE_PROJECTION_PASSES,
     FINAL_MAX_CLEARANCE_CORRECTION,
   )
@@ -1429,6 +1492,7 @@ export class HighDensityForceImproveSolver extends BaseSolver {
   readonly colorMap: Record<string, string>
   readonly totalStepsPerNode: number
   readonly nodeAssignmentMargin: number
+  readonly clearance: number
 
   improvedRoutesByIndex = new Map<number, HighDensityRoute>()
   activeSampleIndex = 0
@@ -1439,6 +1503,7 @@ export class HighDensityForceImproveSolver extends BaseSolver {
     hdRoutes: HighDensityRoute[]
     totalStepsPerNode?: number
     nodeAssignmentMargin?: number
+    clearance?: number
     colorMap?: Record<string, string>
   }) {
     super()
@@ -1449,6 +1514,7 @@ export class HighDensityForceImproveSolver extends BaseSolver {
       params.totalStepsPerNode ?? DEFAULT_TOTAL_STEPS_PER_NODE
     this.nodeAssignmentMargin =
       params.nodeAssignmentMargin ?? DEFAULT_ASSIGNMENT_MARGIN
+    this.clearance = resolveClearance({ clearance: params.clearance })
 
     const routeIndexesByNode = new Map<number, number[]>()
     for (let i = 0; i < params.hdRoutes.length; i++) {
@@ -1477,6 +1543,7 @@ export class HighDensityForceImproveSolver extends BaseSolver {
       improvedNodeCount: 0,
       improvedRouteCount: 0,
       totalStepsPerNode: this.totalStepsPerNode,
+      clearance: this.clearance,
     }
   }
 
@@ -1491,6 +1558,7 @@ export class HighDensityForceImproveSolver extends BaseSolver {
         hdRoutes: this.originalHdRoutes,
         totalStepsPerNode: this.totalStepsPerNode,
         nodeAssignmentMargin: this.nodeAssignmentMargin,
+        clearance: this.clearance,
         colorMap: this.colorMap,
       },
     ] as const
@@ -1512,7 +1580,7 @@ export class HighDensityForceImproveSolver extends BaseSolver {
       bounds,
       inputRoutes,
       this.totalStepsPerNode,
-      { includeForceVectors: true },
+      { clearance: this.clearance, includeForceVectors: true },
     )
 
     for (let i = 0; i < sampleEntry.routeIndexes.length; i++) {
@@ -1536,6 +1604,7 @@ export class HighDensityForceImproveSolver extends BaseSolver {
       improvedNodeCount: this.activeSampleIndex,
       improvedRouteCount: this.improvedRoutesByIndex.size,
       totalStepsPerNode: this.totalStepsPerNode,
+      clearance: this.clearance,
     }
 
     if (this.activeSampleIndex >= this.sampleEntries.length) {
