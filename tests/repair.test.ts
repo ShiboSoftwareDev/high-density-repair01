@@ -354,3 +354,57 @@ test("runForceDirectedImprovement applies the passed clearance override", () => 
     getViaDistance(result.routes[0]!, result.routes[1]!),
   ).toBeGreaterThanOrEqual(viaDiameter + clearance - 0.01)
 })
+
+test("runForceDirectedImprovement preserves exact fixed endpoint coordinates", () => {
+  const nodeWithPortPoints: HighDensityRepair01Input["nodeWithPortPoints"] = {
+    availableZ: [0, 1],
+    capacityMeshNodeId: "repair-sample",
+    center: { x: 0, y: 0 },
+    height: 4,
+    portPoints: [
+      {
+        connectionName: "conn08",
+        portPointId: "pp0",
+        rootConnectionName: "conn08",
+        x: -1.2345,
+        y: 0,
+        z: 0,
+      },
+      {
+        connectionName: "conn08",
+        portPointId: "pp1",
+        rootConnectionName: "conn08",
+        x: 1.2345,
+        y: 0,
+        z: 0,
+      },
+    ],
+    width: 4,
+  }
+  const route: NodeHdRoute = {
+    capacityMeshNodeId: "repair-sample",
+    connectionName: "conn08",
+    rootConnectionName: "conn08",
+    route: [
+      { x: -1.2345, y: 0, z: 0 },
+      { x: 0, y: 0.1, z: 0 },
+      { x: 1.2345, y: 0, z: 0 },
+    ],
+    traceThickness: 0.1,
+    viaDiameter: 0.3,
+    vias: [],
+  }
+
+  const result = runForceDirectedImprovement(
+    { minX: -2, maxX: 2, minY: -2, maxY: 2 },
+    [route],
+    10,
+    { includeForceVectors: false },
+  )
+
+  expect(result.routes[0]?.route[0]?.x).toBe(-1.2345)
+  expect(result.routes[0]?.route.at(-1)?.x).toBe(1.2345)
+  expect(
+    runDrcCheck(nodeWithPortPoints, result.routes as NodeHdRoute[]).ok,
+  ).toBe(true)
+})
